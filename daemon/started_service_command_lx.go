@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -226,8 +227,23 @@ func (s *StartedService) GetURLViaOutbound(ctx context.Context, request *GetURLV
 	}
 	defer transport.CloseIdleConnections()
 
+	client := &http.Client{Transport: transport}
+	if len(request.Headers) != 0 {
+		// lx: SPEC 058 — custom headers may contain API keys. Unlike Go's
+		// built-in Authorization/Cookie safeguards, arbitrary X-* headers are
+		// copied to redirects across origins. Never send a caller-supplied
+		// header to a different scheme or authority, including HTTPS→HTTP.
+		client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+			if len(via) == 0 || len(via) >= 10 || next.URL.Scheme != via[len(via)-1].URL.Scheme ||
+				!strings.EqualFold(next.URL.Host, via[len(via)-1].URL.Host) {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		}
+	}
+
 	started := time.Now()
-	httpResponse, err := (&http.Client{Transport: transport}).Do(httpRequest)
+	httpResponse, err := client.Do(httpRequest)
 	if err != nil {
 		return &GetURLViaOutboundResponse{Error: err.Error()}, nil
 	}
